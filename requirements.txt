@@ -1,0 +1,10 @@
+
+torch>=2.0.0
+torchvision
+torchaudio
+numpy
+pandas
+scikit-learn
+tqdm
+torchtext
+transformers
