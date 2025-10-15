@@ -247,24 +247,37 @@ def load_dataset(dataset_type="amazon"):
     print(f"✅ Loaded {dataset_type}: vocab={vocab_size}, train={len(train_indices)}, val={len(val_indices)}, test={len(test_indices)}")
     return train_indices, val_indices, test_indices, train_labels, val_labels, test_labels, vocab_size
 
+
+def make_pretrained_embedding(embedding_matrix: torch.Tensor, pad_idx: int = 0, freeze: bool = True):
+    emb = nn.Embedding.from_pretrained(embedding_matrix, freeze=freeze, padding_idx=pad_idx)
+    # đảm bảo vector PAD = 0 (phòng khi fine-tune mà vô tình bị cập nhật)
+    with torch.no_grad():
+        emb.weight[pad_idx].fill_(0)
+    return emb
 # ========================
 # 4️⃣ Models
 # ========================
 
 # Parallel Model: CNN and LSTM in parallel, then concat
 class ParallelCNNLSTM(nn.Module):
-    def __init__(self, vocab_size, embed_dim=8, cnn_out_channels=4, lstm_hidden=8, num_classes=2):
+    def __init__(self, vocab_size, embed_dim=8, cnn_out_channels=4, lstm_hidden=8, num_classes=2, embedding_matrix=None, pad_idx=0, freeze_embed=True):
         super(ParallelCNNLSTM, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+
+        if embedding_matrix is not None:
+            assert embedding_matrix.shape[1] == embed_dim, "embed_dim không khớp pretrain!"
+            self.embedding = make_pretrained_embedding(embedding_matrix, pad_idx, freeze=freeze_embed)
+        else:
+            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
+
         
-        # CNN branch
+         # CNN branch
         self.conv1 = nn.Conv1d(embed_dim, cnn_out_channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(cnn_out_channels, cnn_out_channels, kernel_size=3, padding=1)
         self.pool = nn.AdaptiveMaxPool1d(1)
-        
+
         # LSTM branch
         self.lstm = nn.LSTM(embed_dim, lstm_hidden, batch_first=True)
-        
+
         concat_size = cnn_out_channels + lstm_hidden
         self.fc = nn.Linear(concat_size, num_classes)
     
@@ -289,17 +302,18 @@ class ParallelCNNLSTM(nn.Module):
 
 # Sequential Model: CNN then LSTM
 class SequentialCNNLSTM(nn.Module):
-    def __init__(self, vocab_size, embed_dim=8, cnn_out_channels=4, lstm_hidden=8, num_classes=2):
-        super(SequentialCNNLSTM, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
-        
-        # CNN layers (keep sequence length)
+    def __init__(self, vocab_size, embed_dim=8, cnn_out_channels=4, lstm_hidden=8, num_classes=2,
+                 embedding_matrix=None, pad_idx=0, freeze_embed=True):
+        super().__init__()
+        if embedding_matrix is not None:
+            assert embedding_matrix.shape[1] == embed_dim, "embed_dim không khớp pretrain!"
+            self.embedding = make_pretrained_embedding(embedding_matrix, pad_idx, freeze=freeze_embed)
+        else:
+            self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
+
         self.conv1 = nn.Conv1d(embed_dim, cnn_out_channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(cnn_out_channels, cnn_out_channels, kernel_size=3, padding=1)
-        
-        # LSTM on CNN output
         self.lstm = nn.LSTM(cnn_out_channels, lstm_hidden, batch_first=True)
-        
         self.fc = nn.Linear(lstm_hidden, num_classes)
     
     def forward(self, x, lengths):
